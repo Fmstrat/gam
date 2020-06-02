@@ -5,6 +5,8 @@ A linux tool to search and install applications from GitHub. Works on many diffe
 - AppImage
 - Electron (tar/gz)
 
+`gam` will automatically add a command to your `PATH` and if GNOME is installed, add a shortcut to the application. These are automatically removed when uninstalling the applications.
+
 ![demo](demo/gam.gif)
 
 ## Installation
