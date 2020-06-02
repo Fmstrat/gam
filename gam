@@ -1,0 +1,643 @@
+#!/usr/bin/env bash
+
+# Prerequisites
+# =============
+#
+## CentOS
+## ------
+## yum install -y ncurses which jq curl tar
+#
+## Debian/Ubuntu
+## -------------
+## apt install -y ncurses-bin debianutils jq curl tar xz-utils
+#
+
+set -e
+
+{
+
+function usage() {
+  echo 'Usage:
+  gam list                     # List installed applications
+  gam search <search string>   # Get a list of repos that match a search string
+  gam install <author/repo>    # Install one or more applications
+  gam upgrade [<author/repo>]  # Upgrade one, more, or all currently installed applications
+  gam remove <author/repo>     # Remove one or more applications
+  gam create-config            # Create initial configuration
+  
+Optional paramaters:
+  -i|--include <string> [--include <string 2>]
+  # If more than one asset is matched during an install, use the --include flag to match
+  # the asset with the include string. Every include string must match to be considered
+  # for install.
+
+  -e|--exclude <string> [--exclude <string 2>]
+  # If more than one asset is matched during an install, use the --exclue flag to not
+  # match any assets with the excluded string. Every exclude string must not match to be
+  # considered for install.
+
+  -d|--debug
+  # Debug mode to show what is happening behind the scenes.'
+  exit
+}
+
+if [ -z "${1}" ]; then
+  usage
+fi
+
+COMMAND="${1}"
+shift;
+
+# Parse the command line
+COUNTER=0
+APPLICATIONS=()
+INCLUDES=()
+EXCLUDES=()
+while [[ $# -gt 0 ]]; do
+	KEY="${1}"
+  if [[ "${KEY}" = "-"* ]]; then
+    case $KEY in
+      -i|--include)
+        export INCLUDES+=("${2}")
+        shift # past argument
+        shift # past value
+        ;;
+      -e|--exclude)
+        export EXCLUDES+=("${2}")
+        shift # past argument
+        shift # past value
+        ;;
+      -d|--debug)
+        export GAM_DEBUG=true
+        shift # past argument
+        ;;
+      *)
+        usage
+        ;;
+    esac
+  else
+    APPLICATIONS+=("${KEY,,}")
+    shift
+  fi
+	if [ $((COUNTER++)) -eq 100 ]; then
+		usage
+	fi
+done
+
+if [ -n "${GAM_DEBUG}" ]; then
+  set -x
+fi
+
+if [ ${#APPLICATIONS[@]} -eq 0 ]; then
+  usage
+fi
+
+BLACK="$(tput setaf 0)"
+RED="$(tput setaf 1)"
+GREEN="$(tput setaf 2)"
+YELLOW="$(tput setaf 3)"
+BLUE="$(tput setaf 4)"
+MAGENTA="$(tput setaf 5)"
+CYAN="$(tput setaf 6)"
+WHITE="$(tput setaf 7)"
+BOLD="$(tput bold)"
+NORMAL="$(tput sgr0)"
+DIM=$'\e[2m'
+
+COLS=$(tput cols)
+ROWS=$(tput lines)
+
+function checkName() {
+  RET=false
+  if [[ "${1}" = *".AppImage" ]]; then
+    RET=AppImage
+  elif [[ "${1}" = *".tar.xz" ]]; then
+    RET=tar.xz
+  elif [[ "${1}" = *".tar.gz" ]] || [[ "${1}" = *".tgz" ]]; then
+    RET=tgz
+  elif [[ "${1}" = *".deb" ]] && [ "${PACKAGE_MANAGER}" = "deb" ]; then
+    RET=deb
+  elif [[ "${1}" = *".rpm" ]] && [ "${PACKAGE_MANAGER}" = "rpm" ]; then
+    RET=rpm
+  fi
+  echo ${RET}
+}
+
+function checkMatch() {
+  RET=false
+  INCLUDE_COUNTER=0
+  for INCLUDE in ${INCLUDES[@]}; do
+    if [[ "${1}" = *"${INCLUDE}"* ]]; then
+      EXCLUDE_COUNTER=0
+      for EXCLUDE in ${EXCLUDES[@]}; do
+        if [[ "${1}" = *"${EXCLUDE}"* ]]; then
+          EXCLUDE_COUNTER=$((EXCLUDE_COUNTER+1))
+        fi
+      done
+      if [ ${EXCLUDE_COUNTER} -eq 0 ]; then
+        INCLUDE_COUNTER=$((INCLUDE_COUNTER+1))
+      fi
+    fi
+  done
+  if [ ${INCLUDE_COUNTER} -eq ${#INCLUDES[@]} ]; then
+    RET=true
+  fi
+  echo ${RET}
+}
+
+function setVersion() {
+  VERSION="${1}"
+  V_FOLDER="${2}"
+  V_NAME=${V_FOLDER##${INSTALL_FOLDER}/}
+  echo "${VERSION}" | tee "${INSTALL_FOLDER}/${V_FOLDER}/VERSION" > /dev/null
+  echo "${INCLUDES[@]}" | tee "${INSTALL_FOLDER}/${V_FOLDER}/INCLUDES" > /dev/null
+  echo "${EXCLUDES[@]}" | tee "${INSTALL_FOLDER}/${V_FOLDER}/EXCLUDES" > /dev/null
+  printf "${GREEN}[:]${NORMAL} Version ${BOLD}${VERSION}${NORMAL} of ${BOLD}%s${NORMAL} installed in ${BOLD}%s${NORMAL}.\n" "${V_NAME}" "${INSTALL_FOLDER}/${V_FOLDER}"
+}
+
+function setDescription() {
+  D_DESCRIPTION="${1}"
+  D_FOLDER="${2}"
+  echo "${D_DESCRIPTION}" | tee "${INSTALL_FOLDER}/${D_FOLDER}/DESCRIPTION" > /dev/null
+}
+
+function gnomeMenu() {
+  if [ -d /usr/share/applications ]; then
+    NAME="${1}"
+    FOLDER="${2}"
+    EXE="${3}"
+    ICON="${4}"
+    NAME=$(echo "${NAME}" | sed 's/[-_]/ /g;s/\b\(.\)/\u\1/g')
+    SHORTCUT=$(echo "${FOLDER}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
+    SHORTCUT="/usr/share/applications/${SHORTCUT}.desktop"
+    echo "[Desktop Entry]
+Name=${NAME}
+Exec=${EXE}
+Terminal=false
+Icon=${ICON}
+Type=Application
+GenericName=${NAME}
+Comment=${NAME}" | tee "${SHORTCUT}" > /dev/null
+  fi
+}
+
+function symLink() {
+  S_FOLDER=${1}
+  S_EXE=${2}
+  S_AUTHOR=${S_FOLDER%%/*}
+  S_APP=${S_FOLDER##*/}
+  S_ALT_APP=${S_APP}-${S_AUTHOR}
+  if [ -f "/bin/${S_APP}" ]; then
+    if [ -f "/bin/${S_ALT_APP}" ]; then
+      printf "${RED}[!]${NORMAL} ${BOLD}/bin/%s${NORMAL} and ${BOLD}/bin/%s${NORMAL} already exist, cannot make symlink.\n" "${S_APP}" "${S_ALT_APP}"
+    else
+      printf "${YELLOW}[:]${NORMAL} ${BOLD}/bin/%s${NORMAL} already exists, using ${BOLD}/bin/%s${NORMAL} instead.\n" "${S_APP}" "${S_ALT_APP}"
+      ln -s "${S_EXE}" "/bin/${S_ALT_APP}"
+    fi
+  else
+    ln -s "${S_EXE}" "/bin/${S_APP}"
+  fi
+}
+
+function installAppImage() {
+  NAME="${1}"
+  FILE="${2}"
+  FOLDER="${3}"
+  TMPFOLDER="${TMP_FOLDER}/assets/extract/${FOLDER}"
+  rm -rf ${TMP_FOLDER}/assets/extract/*
+  mkdir -p "${TMPFOLDER}"
+  cd "${TMPFOLDER}"
+  chmod 755 "${TMP_FOLDER}/assets/${FILE}"
+  "${TMP_FOLDER}/assets/${FILE}" --appimage-extract > /dev/null
+  ICONSRC=$(ls -S "${TMPFOLDER}/squashfs-root/"*"-icon."* 2>/dev/null |head -n1)
+  if [ -z "${ICONSRC}" ]; then
+    ICONSRC=$(find "${TMPFOLDER}/squashfs-root/" -type f \( -iname *.png -o -iname *.jpg -o -iname *.gif \) -print0 | xargs -0 ls -S |grep icon |head -n1)
+  fi
+  ICON="${INSTALL_FOLDER}/${FOLDER}/${ICONSRC##*/}"
+  rm -rf "${INSTALL_FOLDER}/${FOLDER}"
+  mkdir -p "${INSTALL_FOLDER}/${FOLDER}/app"
+  mv "${ICONSRC}" "${ICON}"
+  chown root:root "${ICON}"
+  cd - > /dev/null
+  rm -rf ${TMP_FOLDER}/assets/extract/*
+  chown root:root "${TMP_FOLDER}/assets/${FILE}"
+  mv "${TMP_FOLDER}/assets/${FILE}" "${INSTALL_FOLDER}/${FOLDER}/app/"
+  EXE="${INSTALL_FOLDER}/${FOLDER}/app/${FILE}"
+  setVersion "${VERSION}" "${FOLDER}"
+  setDescription "${DESCRIPTION}" "${FOLDER}"
+  gnomeMenu "${NAME}" "${FOLDER}" "${EXE}" "${ICON}"
+  symLink "${FOLDER}" "${EXE}"
+}
+
+function installArchive() {
+  TYPE="${1}"
+  NAME="${2}"
+  FILE="${3}"
+  FOLDER="${4}"
+  TMPFOLDER="${TMP_FOLDER}/assets/extract/${FOLDER}"
+  rm -rf ${TMP_FOLDER}/assets/extract/*
+  mkdir -p "${TMPFOLDER}"
+  if [ "${TYPE}" = "tar.xz" ]; then
+    tar xf "${TMP_FOLDER}/assets/${FILE}" -C "${TMPFOLDER}" --strip-components 1
+  else
+    tar xfz "${TMP_FOLDER}/assets/${FILE}" -C "${TMPFOLDER}" --strip-components 1
+  fi
+  rm -rf "${TMP_FOLDER}/assets/${FILE}"
+  if [ -f "${TMPFOLDER}/v8_context_snapshot.bin" ]; then
+    # electron
+    AUTHOR=${FOLDER%%/*}
+    APP=${FOLDER##*/}
+    chown root:root "${TMP_FOLDER}/assets/extract/${AUTHOR}" -R
+    rm -rf "${INSTALL_FOLDER}/${FOLDER}"
+    mkdir -p "${INSTALL_FOLDER}/${FOLDER}"
+    mv "${TMPFOLDER}" "${INSTALL_FOLDER}/${FOLDER}/app"
+    ICON=$(find "${INSTALL_FOLDER}/${FOLDER}/app" -type f \( -iname *.png -o -iname *.jpg -o -iname *.gif \) -print0 | xargs -0 ls -S |grep icon |head -n1)
+    EXE=$(find "${INSTALL_FOLDER}/${FOLDER}/app" -maxdepth 1 -type f -executable -print0 | xargs -0 ls -S |head -n1)
+    setVersion "${VERSION}" "${FOLDER}"
+    setDescription "${DESCRIPTION}" "${FOLDER}"
+    gnomeMenu "${NAME}" "${FOLDER}" "${EXE}" "${ICON}"
+    symLink "${FOLDER}" "${EXE}"
+  fi
+  rm -rf ${TMP_FOLDER}/assets/extract/*
+}
+
+function installDeb() {
+  NAME="${1}"
+  FILE="${2}"
+  FOLDER="${3}"
+  DEB="${TMP_FOLDER}/assets/${FILE}"
+  dpkg -i "${TMP_FOLDER}/assets/${FILE}"
+  mkdir -p "${INSTALL_FOLDER}/${FOLDER}/app"
+  PACKAGE=$(dpkg -I "${TMP_FOLDER}/assets/${FILE}" |grep "Package:")
+  PACKAGE=${PACKAGE#*: }
+  echo "${PACKAGE}" | tee "${INSTALL_FOLDER}/${FOLDER}/app/DEB" >/dev/null
+  rm "${TMP_FOLDER}/assets/${FILE}"
+  setVersion "${VERSION}" "${FOLDER}"
+  setDescription "${DESCRIPTION}" "${FOLDER}"
+}
+
+function installRpm() {
+  set -x
+  NAME="${1}"
+  FILE="${2}"
+  FOLDER="${3}"
+  RPM="${TMP_FOLDER}/assets/${FILE}"
+  rpm -Uvh "${TMP_FOLDER}/assets/${FILE}"
+  mkdir -p "${INSTALL_FOLDER}/${FOLDER}/app"
+  PACKAGE=$(rpm -qp --queryformat "%{NAME}" "${TMP_FOLDER}/assets/${FILE}" 2>/dev/null)
+  echo "${PACKAGE}" | tee "${INSTALL_FOLDER}/${FOLDER}/app/RPM" >/dev/null
+  rm "${TMP_FOLDER}/assets/${FILE}"
+  setVersion "${VERSION}" "${FOLDER}"
+  setDescription "${DESCRIPTION}" "${FOLDER}"
+}
+
+function checkRoot() {
+    if (( $(id -u) != 0 )); then
+      printf "${RED}[!]${NORMAL} This command must be ran as root.\n"
+      exit
+    fi
+}
+
+function installAsset() {
+  FILE="${1}"
+  VERSION="${2}"
+  URL="${3}"
+  FOLDER="${URL%%/releases*}"
+  FOLDER="${FOLDER##*github.com/}"
+  NAME="${FOLDER##*/}"
+  FOLDER="${FOLDER,,}"
+  if [ -f "${INSTALL_FOLDER}/${FOLDER}/VERSION" ]; then
+    CURVERSION=$(cat "${INSTALL_FOLDER}/${FOLDER}/VERSION")
+    if [ "${CURVERSION}" = "${VERSION}" ]; then
+      FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
+      printf "${YELLOW}[:]${NORMAL} Version ${BOLD}${VERSION}${NORMAL} of ${BOLD}%s${NORMAL} already installed in ${BOLD}%s${NORMAL}.\n" "${FULL_NAME}" "${INSTALL_FOLDER}/${FOLDER}"
+      return
+    fi
+  fi
+  ${CURL} -L "${URL}" -o "${TMP_FOLDER}/assets/${FILE}"
+  case "$(checkName ${FILE})" in
+    AppImage)
+      installAppImage "${NAME}" "${FILE}" "${FOLDER}"
+      ;;
+    tar.xz)
+      installArchive "tar.xz" "${NAME}" "${FILE}" "${FOLDER}"
+      ;;
+    tgz)
+      installArchive "tgz" "${NAME}" "${FILE}" "${FOLDER}"
+      ;;
+    deb)
+      installDeb "${NAME}" "${FILE}" "${FOLDER}"
+      ;;
+    rpm)
+      installRpm "${NAME}" "${FILE}" "${FOLDER}"
+      ;;
+  esac
+}
+
+function getDescription() {
+  DESCRIPTION=$(echo ${1} | jq -r '.description')
+  FORK=$(echo ${1} | jq -r '.fork')
+  if [ "${DESCRIPTION}" = "null" ]; then
+    DESCRIPTION="<none>"
+  fi
+  if [ "${FORK}" != "false" ]; then
+    DESCRIPTION="[fork] ${DESCRIPTION}"
+  fi
+  echo "${DESCRIPTION}"
+}
+
+function gamSearch() {
+  if (( ${#APPLICATIONS[@]} != 1 )); then
+    usage
+  fi
+  NAMES=()
+  DESCRIPTIONS=()
+  MAXLENGTH=0
+  CACHE=$(echo "${APPLICATIONS[0]}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
+  if [ ! -f "${TMP_FOLDER}/cache/search/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/search/${CACHE}" -mmin +10 | egrep '.*') ]; then
+    ${CURL} -s "https://api.github.com/search/repositories?q=${APPLICATIONS[0]}" -o "${TMP_FOLDER}/cache/search/${CACHE}"
+  fi
+  JSON=$(cat "${TMP_FOLDER}/cache/search/${CACHE}")
+  for ITEM in $(echo ${JSON} | jq -r '.items[] | @base64'); do
+    ITEM=$(echo ${ITEM} | base64 -d)
+    NAME=$(echo ${ITEM} | jq -r '.full_name')
+    DESCRIPTION=$(getDescription "${ITEM}")
+    NAMES+=("${NAME}")
+    DESCRIPTIONS+=("${DESCRIPTION}")
+    if [ ${#NAME} -gt ${MAXLENGTH} ]; then
+      MAXLENGTH=${#NAME}
+    fi
+  done
+  DESCLENGTH=$(( COLS - MAXLENGTH - 6 ))
+  DESCTRUNC=$(( DESCLENGTH - 3 ))
+  for I in ${!NAMES[@]}; do
+    DESCRIPTION="${DESCRIPTIONS[$I]}"
+    if [ ${#DESCRIPTION} -gt ${DESCLENGTH} ]; then
+      DESCRIPTION="${DESCRIPTION:0:${DESCTRUNC}}..."
+    fi
+    printf "${GREEN}%-${MAXLENGTH}s ${NORMAL}${DIM}| ${NORMAL}%s\n" "${NAMES[$I]}" "${DESCRIPTION}"
+  done
+}
+
+function gamInstall() {
+  for APPLICATION in ${APPLICATIONS[@]}; do
+    NAMES=()
+    VERSIONS=()
+    URLS=()
+    MAXLENGTH=0
+    CACHE=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
+    INFO_CACHE=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]').info
+    if [ ! -f "${TMP_FOLDER}/cache/releases/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${CACHE}" -mmin +1 | egrep '.*') ]; then
+      ${CURL} -s "https://api.github.com/repos/${APPLICATION}/releases" -o "${TMP_FOLDER}/cache/releases/${CACHE}"
+    fi
+    if [ ! -f "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" -mmin +1 | egrep '.*') ]; then
+      ${CURL} -s "https://api.github.com/repos/${APPLICATION}" -o "${TMP_FOLDER}/cache/releases/${INFO_CACHE}"
+    fi
+    if [ -n "$(grep '"message": "Not Found"' "${TMP_FOLDER}/cache/releases/${INFO_CACHE}")" ]; then
+      printf "${RED}[!]${NORMAL} No repo found for ${BOLD}%s${NORMAL}.\n" "${APPLICATION}"
+      break
+    fi
+    JSON=$(cat "${TMP_FOLDER}/cache/releases/${CACHE}")
+    INFO_JSON=$(cat "${TMP_FOLDER}/cache/releases/${CACHE}.info")
+    DESCRIPTION=$(getDescription "${INFO_JSON}")
+    for ASSET in $(echo ${JSON} | jq -r '.[] | select(.draft == false) | @base64'); do
+      ASSET=$(echo ${ASSET} | base64 -d)
+      VERSION=$(echo ${ASSET} | jq -r '.tag_name')
+      for ITEM in $(echo ${ASSET} | jq -r '.assets[] | @base64'); do
+        ITEM=$(echo ${ITEM} | base64 -d)
+        NAME=$(echo ${ITEM} | jq -r '.name')
+        URL=$(echo ${ITEM} | jq -r '.browser_download_url')
+        if [ $(checkName "${NAME}") != "false" ]; then
+          NAMES+=("${NAME}")
+          VERSIONS+=("${VERSION}")
+          URLS+=("${URL}")
+        fi
+      done
+      break
+    done
+    if (( ${#NAMES[@]} == 0 )); then
+      printf "${RED}[!]${NORMAL} No releases or assets were found for ${BOLD}%s${NORMAL}.\n" "${APPLICATION}"
+    elif (( ${#NAMES[@]} == 1 )); then
+      installAsset "${NAMES[0]}" "${VERSIONS[0]}" "${URLS[0]}"
+    else
+      COUNTER=0
+      SELECTED=""
+      INCLUDE_NAMES=()
+      for I in ${!NAMES[@]}; do
+        if [ $(checkMatch "${NAMES[$I]}") != "false" ]; then
+          SELECTED=${I}
+          INCLUDE_NAMES+=("${NAMES[$I]}")
+          COUNTER=$((COUNTER+1))
+        fi
+      done
+      if [ ${COUNTER} -gt 1 ] || [ -z "${SELECTED}" ]; then
+        if [ ${#INCLUDE_NAMES[@]} -eq 0 ]; then
+          printf "${RED}[!]${NORMAL} Multiple assets were found for ${BOLD}%s${NORMAL}. You must specify the --match flag. See usage for help.\n" "${APPLICATION}"
+          for N in ${NAMES[@]}; do
+            printf "     ${BOLD}-${NORMAL} %s\n" "${N}"
+          done
+        else
+          printf "${RED}[!]${NORMAL} Multiple assets were found for ${BOLD}%s${NORMAL} and the match specified. See usage for help.\n" "${APPLICATION}"
+          for N in ${INCLUDE_NAMES[@]}; do
+            printf "     ${BOLD}-${NORMAL} %s\n" "${N}"
+          done
+        fi
+      else
+        installAsset "${NAMES[$SELECTED]}" "${VERSIONS[$SELECTED]}" "${URLS[$SELECTED]}"
+      fi
+    fi
+  done
+}
+
+function gamUpgrade() {
+  if [ ${#APPLICATIONS[@]} -eq 0 ]; then
+    for F in $(ls "${INSTALL_FOLDER}/"*"/"*"/DESCRIPTION" 2>/dev/null); do
+      NAME=${F#${INSTALL_FOLDER}/}
+      NAME=${NAME%%/DESCRIPTION}
+      APPLICATIONS=("${NAME}")
+      INCLUDE_LIST=${F%/*}
+      INCLUDE_LIST=$(cat "${INCLUDE}/INCLUDES")
+      INCLUDES=()
+      for INCLUDE in $INCLUDE_LIST; do
+        INCLUDES+=("${INCLUDE}")
+      done
+      EXCLUDE_LIST=${F%/*}
+      EXCLUDE_LIST=$(cat "${EXCLUDE}/EXCLUDES")
+      EXCLUDES=()
+      for EXCLUDE in $EXCLUDE_LIST; do
+        EXCLUDES+=("${EXCLUDE}")
+      done
+      gamInstall
+    done
+  else
+    ORIG_APPLICATIONS=("${APPLICATIONS[@]}")
+    for NAME in ${APPLICATIONS[@]}; do
+      if [ -d "${INSTALL_FOLDER}/${NAME}" ]; then
+        APPLICATIONS=("${NAME}")
+        INCLUDE_LIST=$(cat "${INSTALL_FOLDER}/${NAME}/INCLUDES")
+        INCLUDES=()
+        for INCLUDE in $INCLUDE_LIST; do
+          INCLUDES+=("${INCLUDE}")
+        done
+        EXCLUDE_LIST=$(cat "${INSTALL_FOLDER}/${NAME}/EXCLUDES")
+        EXCLUDES=()
+        for EXCLUDE in $EXCLUDE_LIST; do
+          EXCLUDES+=("${EXCLUDE}")
+        done
+        gamInstall
+      else
+        printf "${RED}[!]${NORMAL} Application ${BOLD}%s${NORMAL} not installed.\n" "${NAME}"
+      fi
+    done
+  fi
+}
+
+function gamRemove() {
+  for APPLICATION in ${APPLICATIONS[@]}; do
+    FOUND=false
+    SHORTCUT=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
+    SHORTCUT="/usr/share/applications/${SHORTCUT}.desktop"
+    AUTHOR=${APPLICATION%%/*}
+    APP=${APPLICATION##*/}
+    if [ -f "${SHORTCUT}" ]; then
+      EXE=$(grep ^Exec= "${SHORTCUT}" |head -n1)
+      EXE="${EXE##Exec=}"
+      if [ -L "/bin/${APP}" ]; then
+        LINK=$(readlink -f "/bin/${APP}")
+        if [ "${LINK}" = "${EXE}" ]; then
+          rm -f "/bin/${APP}"
+        fi
+      fi
+      if [ -L "/bin/${APP}-${AUTHOR}" ]; then
+        LINK=$(readlink -f "/bin/${APP}-${AUTHOR}")
+        if [ "${LINK}" = "${EXE}" ]; then
+          rm -f "/bin/${APP}-${AUTHOR}"
+        fi
+      fi
+      rm -f "${SHORTCUT}"
+      FOUND=true
+    fi
+    if [ -f "${INSTALL_FOLDER}/${APPLICATION}/app/DEB" ]; then
+      DEB=$(cat "${INSTALL_FOLDER}/${APPLICATION}/app/DEB")
+      dpkg -r ${DEB}
+      FOUND=true
+    fi
+    if [ -f "${INSTALL_FOLDER}/${APPLICATION}/app/RPM" ]; then
+      RPM=$(cat "${INSTALL_FOLDER}/${APPLICATION}/app/RPM")
+      rpm -e ${RPM}
+      FOUND=true
+    fi
+    if [ -d "${INSTALL_FOLDER}/${APPLICATION}" ]; then
+      rm -rf "${INSTALL_FOLDER}/${APPLICATION}"
+      FOUND=true
+    fi
+    if [ -d "${INSTALL_FOLDER}/${AUTHOR}" ] && [ -z "$(ls -A "${INSTALL_FOLDER}/${AUTHOR}")" ]; then
+      rmdir "${INSTALL_FOLDER}/${AUTHOR}"
+    fi
+    if [ ${FOUND} = true ]; then
+      printf "${GREEN}[:]${NORMAL} Uninstalled ${BOLD}%s${NORMAL}.\n" "${APPLICATION}"    
+    else
+      printf "${RED}[!]${NORMAL} Application ${BOLD}%s${NORMAL} not installed.\n" "${APPLICATION}"    
+    fi
+  done    
+}
+
+function gamList() {
+  NAMES=()
+  DESCRIPTIONS=()
+  MAXLENGTH=0
+  for F in $(ls "${INSTALL_FOLDER}/"*"/"*"/DESCRIPTION" 2>/dev/null); do
+    DESCRIPTION=$(cat "${F}")
+    NAME=${F#${INSTALL_FOLDER}/}
+    NAME=${NAME%%/DESCRIPTION}
+    NAMES+=("${NAME}")
+    DESCRIPTIONS+=("${DESCRIPTION}")
+    if [ ${#NAME} -gt ${MAXLENGTH} ]; then
+      MAXLENGTH=${#NAME}
+    fi
+  done
+  DESCLENGTH=$(( COLS - MAXLENGTH - 6 ))
+  DESCTRUNC=$(( DESCLENGTH - 3 ))
+  for I in ${!NAMES[@]}; do
+    DESCRIPTION="${DESCRIPTIONS[$I]}"
+    if [ ${#DESCRIPTION} -gt ${DESCLENGTH} ]; then
+      DESCRIPTION="${DESCRIPTION:0:${DESCTRUNC}}..."
+    fi
+    printf "${GREEN}%-${MAXLENGTH}s ${NORMAL}${DIM}| ${NORMAL}%s\n" "${NAMES[$I]}" "${DESCRIPTION}"
+  done
+}
+
+function createConfig() {
+  if [ ! -f /etc/gam.conf ]; then
+    echo '# The folder to install applications into
+INSTALL_FOLDER=/opt/github
+
+# Where to place temporary cache files
+TMP_FOLDER=/tmp/gam
+
+# If you hit GitHub API limits, you can use a Personal Access Token
+# Create one here: https://github.com/settings/tokens/new
+#GITHUB_CREDS=username:token
+' | tee -a /etc/gam.conf >/dev/null
+    printf "${GREEN}[:]${NORMAL} Configuration created in ${BOLD}/etc/gam.conf${NORMAL}.\n"
+  else
+    printf "${YELLOW}[:]${NORMAL} Configuration already exists in ${BOLD}/etc/gam.conf${NORMAL}.\n"
+  fi
+}
+
+function gamMain() {
+  case "${COMMAND}" in
+    search|find)
+      gamSearch
+      ;;
+    install|add)
+      checkRoot
+      gamInstall
+      ;;
+    upgrade)
+      checkRoot
+      gamUpgrade
+      ;;
+    remove|uninstall)
+      checkRoot
+      gamRemove
+      ;;
+    create-config)
+      checkRoot
+      createConfig
+      ;;
+    list)
+      gamList
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+if [ ! -f /etc/gam.conf ]; then
+  if [ "${COMMAND}" != "create-config" ]; then
+    printf "${RED}[!]${NORMAL} Configuration does not exist, run ${BOLD}gam create-config${NORMAL}.\n"
+    exit
+  fi
+else
+  . /etc/gam.conf
+  mkdir -p ${TMP_FOLDER}/cache/releases
+  mkdir -p ${TMP_FOLDER}/cache/search
+  mkdir -p ${TMP_FOLDER}/assets/extract
+fi
+
+CURL=curl
+if [ -n "${GITHUB_CREDS}" ]; then
+  CURL="${CURL} -u ${GITHUB_CREDS}"
+fi
+
+if [ -n "$(which dpkg 2>/dev/null)" ]; then
+  PACKAGE_MANAGER=deb
+elif [ -n "$(which rpm 2>/dev/null)" ]; then
+  PACKAGE_MANAGER=rpm
+fi
+
+gamMain
+
+}
