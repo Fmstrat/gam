@@ -12,12 +12,12 @@ First, install the prequisites.
 
 Debian/Ubuntu:
 ``` bash
-apt install -y ncurses-bin debianutils sudo jq curl tar xz-utils
+apt install -y ncurses-bin debianutils jq curl tar xz-utils
 ```
 
 CentOS:
 ``` bash
-yum install -y ncurses which sudo jq curl tar
+yum install -y ncurses which jq curl tar
 ```
 
 Then install `gam`:
