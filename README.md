@@ -1,5 +1,5 @@
 # GitHub Application Manager
-A linux tool to search and install applications from GitHub. Works on many different application types that are stored in repos as releases, including:
+A linux tool similar to `apt` and `yum` that is used to search for and install applications from GitHub. Works on many different application types that are stored in repos as releases, including:
 - deb
 - rpm
 - AppImage
