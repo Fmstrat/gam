@@ -581,13 +581,22 @@ TMP_FOLDER=/tmp/gam
   fi
 }
 
+function checkApplications() {
+  if [ ${#APPLICATIONS[@]} -eq 0 ]; then
+    usage
+  fi
+}
+
+
 function gamMain() {
   case "${COMMAND}" in
     search|find)
+      checkApplications
       gamSearch
       ;;
     install|add)
       checkRoot
+      checkApplications
       gamInstall
       ;;
     upgrade)
@@ -596,6 +605,7 @@ function gamMain() {
       ;;
     remove|uninstall)
       checkRoot
+      checkApplications
       gamRemove
       ;;
     create-config)
@@ -617,9 +627,6 @@ if [ ! -f /etc/gam.conf ]; then
     exit
   fi
 else
-  if [ ${#APPLICATIONS[@]} -eq 0 ]; then
-    usage
-  fi
   . /etc/gam.conf
   mkdir -p ${TMP_FOLDER}/cache/releases
   mkdir -p ${TMP_FOLDER}/cache/search
