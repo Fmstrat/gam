@@ -88,10 +88,6 @@ if [ -n "${GAM_DEBUG}" ]; then
   set -x
 fi
 
-if [ ${#APPLICATIONS[@]} -eq 0 ]; then
-  usage
-fi
-
 BLACK="$(tput setaf 0)"
 RED="$(tput setaf 1)"
 GREEN="$(tput setaf 2)"
@@ -621,6 +617,9 @@ if [ ! -f /etc/gam.conf ]; then
     exit
   fi
 else
+  if [ ${#APPLICATIONS[@]} -eq 0 ]; then
+    usage
+  fi
   . /etc/gam.conf
   mkdir -p ${TMP_FOLDER}/cache/releases
   mkdir -p ${TMP_FOLDER}/cache/search
