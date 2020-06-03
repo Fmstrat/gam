@@ -13,6 +13,7 @@
 #
 
 RETURN=0
+RELEASE=v1.1
 
 {
 
@@ -25,6 +26,7 @@ function usage() {
   gam upgrade [<author/repo>]  # Upgrade one, more, or all currently installed applications
   gam remove <author/repo>     # Remove one or more applications
   gam create-config            # Create initial configuration
+  gam update                   # Update your version of gam
   
 Optional paramaters:
   -i|--include <string> [--include <string 2>]
@@ -96,6 +98,14 @@ done
 if [ -n "${GAM_DEBUG}" ]; then
   set -x
 fi
+
+function checkAPILimit() {
+  if [ -n "$(grep '"message":"API rate limit exceeded' ${1})" ]; then
+    printf "${RED}[!]${NORMAL} GitHub API limit exceeded, see ${BOLD}https://github.com/Fmstrat/gam#github-api-limits${NORMAL}\n"
+    rm -f "${1}"
+    exit 1
+  fi
+}
 
 function checkName() {
   RET=false
@@ -364,6 +374,7 @@ function gamSearch() {
   CACHE=$(echo "${APPLICATIONS[0]}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
   if [ ! -f "${TMP_FOLDER}/cache/search/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/search/${CACHE}" -mmin +10 | egrep '.*') ]; then
     ${CURL} -s "https://api.github.com/search/repositories?q=${APPLICATIONS[0]}" -o "${TMP_FOLDER}/cache/search/${CACHE}"
+    checkAPILimit "${TMP_FOLDER}/cache/search/${CACHE}"
   fi
   JSON=$(cat "${TMP_FOLDER}/cache/search/${CACHE}")
   for ITEM in $(echo ${JSON} | jq -r '.items[] | @base64'); do
@@ -387,6 +398,18 @@ function gamSearch() {
   done
 }
 
+function gamVersionCheck() {
+  if [ ! -f "${TMP_FOLDER}/cache/version" ] || [ $(find "${TMP_FOLDER}/cache/version" -mmin +1440 | egrep '.*') ]; then
+    ${CURL} -s "https://api.github.com/repos/fmstrat/gam/releases/latest" -o "${TMP_FOLDER}/cache/version"
+    checkAPILimit "${TMP_FOLDER}/cache/version"
+  fi
+  JSON=$(cat "${TMP_FOLDER}/cache/version")
+  VERSION=$(echo ${JSON} | jq -r '.tag_name')
+  if [ "${VERSION}" != "${RELEASE}" ]; then
+    printf "${YELLOW}[:]${NORMAL} A new version of ${BOLD}gam${NORMAL} is available. Install with ${BOLD}gam update${NORMAL}.\n"
+  fi
+}
+
 function gamInstall() {
   for APPLICATION in ${APPLICATIONS[@]}; do
     NAMES=()
@@ -397,9 +420,11 @@ function gamInstall() {
     INFO_CACHE=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]').info
     if [ ! -f "${TMP_FOLDER}/cache/releases/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${CACHE}" -mmin +10 | egrep '.*') ]; then
       ${CURL} -s "https://api.github.com/repos/${APPLICATION}/releases" -o "${TMP_FOLDER}/cache/releases/${CACHE}"
+      checkAPILimit "${TMP_FOLDER}/cache/releases/${CACHE}"
     fi
     if [ ! -f "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" -mmin +10 | egrep '.*') ]; then
       ${CURL} -s "https://api.github.com/repos/${APPLICATION}" -o "${TMP_FOLDER}/cache/releases/${INFO_CACHE}"
+      checkAPILimit "${TMP_FOLDER}/cache/releases/${INFO_CACHE}"
     fi
     if [ -n "$(grep '"message": "Not Found"' "${TMP_FOLDER}/cache/releases/${INFO_CACHE}")" ]; then
       printf "${RED}[!]${NORMAL} No repo found for ${BOLD}%s${NORMAL}.\n" "${APPLICATION}"
@@ -617,18 +642,60 @@ function checkApplications() {
   fi
 }
 
+function gamUpdate() {
+  SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+  SCRIPTBIN="${0##*/}"
+  if [ -L "${SCRIPTDIR}/${SCRIPTBIN}" ]; then
+    SCRIPT=$(readlink -f "${SCRIPTDIR}/${SCRIPTBIN}")
+    SCRIPTDIR=${SCRIPT%/*}
+    SCRIPTBIN=${SCRIPT##*/}
+  fi
+  if [ ! -w "${SCRIPTDIR}/${SCRIPTBIN}" ]; then
+    printf "${RED}[!]${NORMAL} ${BOLD}${SCRIPTBIN}${NORMAL} is not writable by this user. Do you need ${BOLD}sudo ${SCRIPTBIN} update${NORMAL}?\n"
+    exit
+  fi
+  if [ ! -f "${TMP_FOLDER}/cache/version" ] || [ $(find "${TMP_FOLDER}/cache/version" -mmin +1440 | egrep '.*') ]; then
+    ${CURL} -s "https://api.github.com/repos/fmstrat/gam/releases/latest" -o "${TMP_FOLDER}/cache/version"
+    checkAPILimit "${TMP_FOLDER}/cache/version"
+  fi
+  JSON=$(cat "${TMP_FOLDER}/cache/version")
+  VERSION=$(echo ${JSON} | jq -r '.tag_name')
+  if [ "${VERSION}" == "${RELEASE}" ]; then
+    printf "${YELLOW}[:]${NORMAL} ${BOLD}gam${NORMAL} is already the latest version.\n"
+    return
+  else
+    URL=$(echo ${JSON} | jq -r '.tarball_url')
+    ${CURL} -L "${URL}" -o "${TMP_FOLDER}/assets/gam.tgz"
+    TMPFOLDER="${TMP_FOLDER}/assets/extract/gam"
+    rm -rf ${TMP_FOLDER}/assets/extract/*
+    mkdir -p "${TMPFOLDER}"
+    tar xfz "${TMP_FOLDER}/assets/gam.tgz" -C "${TMPFOLDER}" --strip-components 1
+    chmod --reference="${SCRIPTDIR}/${SCRIPTBIN}" "${TMP_FOLDER}/assets/extract/gam/gam"
+    chown --reference="${SCRIPTDIR}/${SCRIPTBIN}" "${TMP_FOLDER}/assets/extract/gam/gam"
+    cp "${TMP_FOLDER}/assets/extract/gam/gam" "${TMP_FOLDER}/gam.exec"
+    rm -f "${TMP_FOLDER}/assets/gam.tgz"
+    rm -rf "${TMP_FOLDER}/assets/extract/*"
+    mv "${TMP_FOLDER}/gam.exec" "${SCRIPTDIR}/${SCRIPTBIN}" 
+    printf "${GREEN}[:]${NORMAL} Upgraded ${BOLD}gam${NORMAL} to version ${BOLD}${VERSION}${NORMAL}.\n"
+    exit
+  fi
+}
+
 function gamMain() {
   case "${COMMAND}" in
     search|find)
+      gamVersionCheck
       checkApplications
       gamSearch
       ;;
     install|add)
+      gamVersionCheck
       checkRoot
       checkApplications
       gamInstall
       ;;
     check)
+      gamVersionCheck
       CHECK_ONLY=true
       gamUpgrade
       if (( RETURN == 1 )); then
@@ -636,10 +703,15 @@ function gamMain() {
       fi
       ;;
     upgrade)
+      gamVersionCheck
       checkRoot
       gamUpgrade
       ;;
+    update)
+      gamUpdate
+      ;;      
     remove|uninstall)
+      gamVersionCheck
       checkRoot
       checkApplications
       gamRemove
@@ -649,9 +721,11 @@ function gamMain() {
       createConfig
       ;;
     list)
+      gamVersionCheck
       gamList
       ;;
     *)
+      gamVersionCheck
       usage
       ;;
   esac

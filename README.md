@@ -55,6 +55,8 @@ TMP_FOLDER=/tmp/gam
 # Create one here: https://github.com/settings/tokens/new
 #GITHUB_CREDS=username:token
 ```
+
+### GitHub API Limits
 If you use `gam` a lot at once, you may hit GitHub API limits. If you find installs or searches are not working, create a Personal Access Token (PAT) here: https://github.com/settings/tokens/new
 
 This can be included in the `/etc/gam.conf` file to increase API limits to 5000 hits per day.
@@ -71,6 +73,7 @@ Usage:
   gam upgrade [<author/repo>]  # Upgrade one, more, or all currently installed applications
   gam remove <author/repo>     # Remove one or more applications
   gam create-config            # Create initial configuration
+  gam update                   # Update your version of gam
   
 Optional paramaters:
   -i|--include <string> [--include <string 2>]
