@@ -428,7 +428,7 @@ function gamInstall() {
       done
       if [ ${COUNTER} -gt 1 ] || [ -z "${SELECTED}" ]; then
         if [ ${#INCLUDE_NAMES[@]} -eq 0 ]; then
-          printf "${RED}[!]${NORMAL} Multiple assets were found for ${BOLD}%s${NORMAL}. You must specify the --match flag. See usage for help.\n" "${APPLICATION}"
+          printf "${RED}[!]${NORMAL} Multiple assets were found for ${BOLD}%s${NORMAL}. You must use the --include/exclude flags. See usage for help.\n" "${APPLICATION}"
           for N in ${NAMES[@]}; do
             printf "     ${BOLD}-${NORMAL} %s\n" "${N}"
           done
