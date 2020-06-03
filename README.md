@@ -9,6 +9,13 @@ A linux tool similar to `apt` and `yum` that is used to search for and install a
 
 ![demo](demo/gam.gif)
 
+## Contents
+- [Installation](#Installation)
+- [Configuration](#Configuration)
+- [Usage](#Usage)
+- [User mode](#User%20mode)
+- [Automatic update checking](#Automatic%20update%20checking)
+
 ## Installation
 First, install the prequisites.
 
@@ -90,4 +97,18 @@ You may run this application without `sudo` or root by utilizing the `--user` fl
 gam create-config --user
 gam list --user
 gam install author/app --user
+```
+
+## Automatic update checking
+The `gam check` command will return an exit code of `133` if an application needs updating. This can be used to auto-check for updates. A combination of `cron` and your `bashrc` can be used to check for updates.
+
+To check for changes daily at the system level:
+``` bash
+echo '/usr/local/bin/gam check >/dev/null 2>&1; echo $? > /tmp/gam-status' |sudo tee /etc/cron.daily/gam
+sudo chmod +x /etc/cron.daily/gam
+```
+
+Then, to have your shell alert you about updates:
+``` bash
+echo 'if [ -f /tmp/gam-status ] && (( $(cat /tmp/gam-status) == 133 )); then echo "[:] There are new gam updates"; fi' >> ~/.bashrc
 ```

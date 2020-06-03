@@ -315,7 +315,7 @@ function installAsset() {
       else
         FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
         printf "${YELLOW}[:]${NORMAL} ${BOLD}${FULL_NAME}${NORMAL}:${BOLD}${VERSION}${NORMAL} is newer than the installed ${BOLD}${CURVERSION}${NORMAL}.\n"
-        RETURN=1
+        RETURN=133
         return
       fi
     fi
