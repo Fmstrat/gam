@@ -452,13 +452,13 @@ function gamUpgrade() {
       NAME=${NAME%%/DESCRIPTION}
       APPLICATIONS=("${NAME}")
       INCLUDE_LIST=${F%/*}
-      INCLUDE_LIST=$(cat "${INCLUDE}/INCLUDES")
+      INCLUDE_LIST=$(cat "${INCLUDE_LIST}/INCLUDES")
       INCLUDES=()
       for INCLUDE in $INCLUDE_LIST; do
         INCLUDES+=("${INCLUDE}")
       done
       EXCLUDE_LIST=${F%/*}
-      EXCLUDE_LIST=$(cat "${EXCLUDE}/EXCLUDES")
+      EXCLUDE_LIST=$(cat "${EXCLUDE_LIST}/EXCLUDES")
       EXCLUDES=()
       for EXCLUDE in $EXCLUDE_LIST; do
         EXCLUDES+=("${EXCLUDE}")
