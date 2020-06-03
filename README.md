@@ -56,7 +56,7 @@ TMP_FOLDER=/tmp/gam
 #GITHUB_CREDS=username:token
 ```
 
-### GitHub API Limits
+### GitHub API limits
 If you use `gam` a lot at once, you may hit GitHub API limits. If you find installs or searches are not working, create a Personal Access Token (PAT) here: https://github.com/settings/tokens/new
 
 This can be included in the `/etc/gam.conf` file to increase API limits to 5000 hits per day.
