@@ -32,9 +32,13 @@ Optional paramaters:
   # for install.
 
   -e|--exclude <string> [--exclude <string 2>]
-  # If more than one asset is matched during an install, use the --exclue flag to not
+  # If more than one asset is matched during an install, use the --exclude flag to not
   # match any assets with the excluded string. Every exclude string must not match to be
   # considered for install.
+
+  -u:--user
+  # Run in rootless user mode with a ~/.config/gam/gam.conf configuration, executables in,
+  # ~/bin (by default), and no support for rpm or deb files.
 
   -d|--debug
   # Debug mode to show what is happening behind the scenes.'
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
         export EXCLUDES+=("${2}")
         shift # past argument
         shift # past value
+        ;;
+      -u|--user)
+        export USER_MODE=true
+        shift # past argument
         ;;
       -d|--debug)
         export GAM_DEBUG=true
@@ -111,9 +119,9 @@ function checkName() {
     RET=tar.xz
   elif [[ "${1}" = *".tar.gz" ]] || [[ "${1}" = *".tgz" ]]; then
     RET=tgz
-  elif [[ "${1}" = *".deb" ]] && [ "${PACKAGE_MANAGER}" = "deb" ]; then
+  elif [ -z "${USER_MODE}" ] && [[ "${1}" = *".deb" ]] && [ "${PACKAGE_MANAGER}" = "deb" ]; then
     RET=deb
-  elif [[ "${1}" = *".rpm" ]] && [ "${PACKAGE_MANAGER}" = "rpm" ]; then
+  elif [ -z "${USER_MODE}" ] && [[ "${1}" = *".rpm" ]] && [ "${PACKAGE_MANAGER}" = "rpm" ]; then
     RET=rpm
   fi
   echo ${RET}
@@ -158,14 +166,14 @@ function setDescription() {
 }
 
 function gnomeMenu() {
-  if [ -d /usr/share/applications ]; then
+  if [ -d ${SHORTCUT_FOLDER} ]; then
     NAME="${1}"
     FOLDER="${2}"
     EXE="${3}"
     ICON="${4}"
     NAME=$(echo "${NAME}" | sed 's/[-_]/ /g;s/\b\(.\)/\u\1/g')
     SHORTCUT=$(echo "${FOLDER}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
-    SHORTCUT="/usr/share/applications/${SHORTCUT}.desktop"
+    SHORTCUT="${SHORTCUT_FOLDER}/${SHORTCUT}.desktop"
     echo "[Desktop Entry]
 Name=${NAME}
 Exec=${EXE}
@@ -183,15 +191,15 @@ function symLink() {
   S_AUTHOR=${S_FOLDER%%/*}
   S_APP=${S_FOLDER##*/}
   S_ALT_APP=${S_APP}-${S_AUTHOR}
-  if [ -f "/bin/${S_APP}" ]; then
-    if [ -f "/bin/${S_ALT_APP}" ]; then
-      printf "${RED}[!]${NORMAL} ${BOLD}/bin/%s${NORMAL} and ${BOLD}/bin/%s${NORMAL} already exist, cannot make symlink.\n" "${S_APP}" "${S_ALT_APP}"
+  if [ -f "${BIN_FOLDER}/${S_APP}" ]; then
+    if [ -f "${BIN_FOLDER}/${S_ALT_APP}" ]; then
+      printf "${RED}[!]${NORMAL} ${BOLD}/bin/%s${NORMAL} and ${BOLD}${BIN_FOLDER}/%s${NORMAL} already exist, cannot make symlink.\n" "${S_APP}" "${S_ALT_APP}"
     else
-      printf "${YELLOW}[:]${NORMAL} ${BOLD}/bin/%s${NORMAL} already exists, using ${BOLD}/bin/%s${NORMAL} instead.\n" "${S_APP}" "${S_ALT_APP}"
-      ln -s "${S_EXE}" "/bin/${S_ALT_APP}"
+      printf "${YELLOW}[:]${NORMAL} ${BOLD}${BIN_FOLDER}/%s${NORMAL} already exists, using ${BOLD}${BIN_FOLDER}/%s${NORMAL} instead.\n" "${S_APP}" "${S_ALT_APP}"
+      ln -s "${S_EXE}" "${BIN_FOLDER}/${S_ALT_APP}"
     fi
   else
-    ln -s "${S_EXE}" "/bin/${S_APP}"
+    ln -s "${S_EXE}" "${BIN_FOLDER}/${S_APP}"
   fi
 }
 
@@ -213,10 +221,12 @@ function installAppImage() {
   rm -rf "${INSTALL_FOLDER}/${FOLDER}"
   mkdir -p "${INSTALL_FOLDER}/${FOLDER}/app"
   mv "${ICONSRC}" "${ICON}"
-  chown root:root "${ICON}"
+  if [ -z "${USER_MODE}" ]; then
+    chown root:root "${ICON}"
+    chown root:root "${TMP_FOLDER}/assets/${FILE}"
+  fi
   cd - > /dev/null
   rm -rf ${TMP_FOLDER}/assets/extract/*
-  chown root:root "${TMP_FOLDER}/assets/${FILE}"
   mv "${TMP_FOLDER}/assets/${FILE}" "${INSTALL_FOLDER}/${FOLDER}/app/"
   EXE="${INSTALL_FOLDER}/${FOLDER}/app/${FILE}"
   setVersion "${VERSION}" "${FOLDER}"
@@ -243,7 +253,9 @@ function installArchive() {
     # electron
     AUTHOR=${FOLDER%%/*}
     APP=${FOLDER##*/}
-    chown root:root "${TMP_FOLDER}/assets/extract/${AUTHOR}" -R
+    if [ -z "${USER_MODE}" ]; then
+      chown root:root "${TMP_FOLDER}/assets/extract/${AUTHOR}" -R
+    fi
     rm -rf "${INSTALL_FOLDER}/${FOLDER}"
     mkdir -p "${INSTALL_FOLDER}/${FOLDER}"
     mv "${TMPFOLDER}" "${INSTALL_FOLDER}/${FOLDER}/app"
@@ -273,7 +285,6 @@ function installDeb() {
 }
 
 function installRpm() {
-  set -x
   NAME="${1}"
   FILE="${2}"
   FOLDER="${3}"
@@ -288,7 +299,7 @@ function installRpm() {
 }
 
 function checkRoot() {
-    if (( $(id -u) != 0 )); then
+    if [ -z "${USER_MODE}" ] && (( $(id -u) != 0 )); then
       printf "${RED}[!]${NORMAL} This command must be ran as root.\n"
       exit
     fi
@@ -427,7 +438,7 @@ function gamInstall() {
         fi
       done
       if [ ${COUNTER} -gt 1 ] || [ -z "${SELECTED}" ]; then
-        if [ ${#INCLUDE_NAMES[@]} -eq 0 ]; then
+        if [ ${#INCLUDES[@]} -eq 0 ]; then
           printf "${RED}[!]${NORMAL} Multiple assets were found for ${BOLD}%s${NORMAL}. You must use the --include/exclude flags. See usage for help.\n" "${APPLICATION}"
           for N in ${NAMES[@]}; do
             printf "     ${BOLD}-${NORMAL} %s\n" "${N}"
@@ -492,22 +503,22 @@ function gamRemove() {
   for APPLICATION in ${APPLICATIONS[@]}; do
     FOUND=false
     SHORTCUT=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
-    SHORTCUT="/usr/share/applications/${SHORTCUT}.desktop"
+    SHORTCUT="${SHORTCUT_FOLDER}/${SHORTCUT}.desktop"
     AUTHOR=${APPLICATION%%/*}
     APP=${APPLICATION##*/}
     if [ -f "${SHORTCUT}" ]; then
       EXE=$(grep ^Exec= "${SHORTCUT}" |head -n1)
       EXE="${EXE##Exec=}"
-      if [ -L "/bin/${APP}" ]; then
-        LINK=$(readlink -f "/bin/${APP}")
+      if [ -L "${BIN_FOLDER}/${APP}" ]; then
+        LINK=$(readlink -f "${BIN_FOLDER}/${APP}")
         if [ "${LINK}" = "${EXE}" ]; then
-          rm -f "/bin/${APP}"
+          rm -f "${BIN_FOLDER}/${APP}"
         fi
       fi
-      if [ -L "/bin/${APP}-${AUTHOR}" ]; then
-        LINK=$(readlink -f "/bin/${APP}-${AUTHOR}")
+      if [ -L "${BIN_FOLDER}/${APP}-${AUTHOR}" ]; then
+        LINK=$(readlink -f "${BIN_FOLDER}/${APP}-${AUTHOR}")
         if [ "${LINK}" = "${EXE}" ]; then
-          rm -f "/bin/${APP}-${AUTHOR}"
+          rm -f "${BIN_FOLDER}/${APP}-${AUTHOR}"
         fi
       fi
       rm -f "${SHORTCUT}"
@@ -564,20 +575,38 @@ function gamList() {
 }
 
 function createConfig() {
-  if [ ! -f /etc/gam.conf ]; then
+  if [ -z "${USER_MODE}" ] && [ ! -f ${CONFIG} ]; then
     echo '# The folder to install applications into
 INSTALL_FOLDER=/opt/github
 
 # Where to place temporary cache files
 TMP_FOLDER=/tmp/gam
 
+# Where to symlink executables for the path
+BIN_FOLDER=/bin
+
 # If you hit GitHub API limits, you can use a Personal Access Token
 # Create one here: https://github.com/settings/tokens/new
 #GITHUB_CREDS=username:token
-' | tee -a /etc/gam.conf >/dev/null
-    printf "${GREEN}[:]${NORMAL} Configuration created in ${BOLD}/etc/gam.conf${NORMAL}.\n"
+' | tee -a ${CONFIG} >/dev/null
+    printf "${GREEN}[:]${NORMAL} Configuration created in ${BOLD}${CONFIG}${NORMAL}.\n"
+  elif [ -n "${USER_MODE}" ] && [ ! -f ${CONFIG} ]; then
+    echo '# The folder to install applications into
+INSTALL_FOLDER=~/.local/share/gam/github
+
+# Where to place temporary cache files
+TMP_FOLDER=/tmp/gam-user
+
+# Where to symlink executables for the path
+BIN_FOLDER=~/bin
+
+# If you hit GitHub API limits, you can use a Personal Access Token
+# Create one here: https://github.com/settings/tokens/new
+#GITHUB_CREDS=username:token
+' | tee -a ${CONFIG} >/dev/null
+    printf "${GREEN}[:]${NORMAL} Configuration created in ${BOLD}${CONFIG}${NORMAL}.\n"
   else
-    printf "${YELLOW}[:]${NORMAL} Configuration already exists in ${BOLD}/etc/gam.conf${NORMAL}.\n"
+    printf "${YELLOW}[:]${NORMAL} Configuration already exists in ${BOLD}${CONFIG}${NORMAL}.\n"
   fi
 }
 
@@ -586,7 +615,6 @@ function checkApplications() {
     usage
   fi
 }
-
 
 function gamMain() {
   case "${COMMAND}" in
@@ -621,16 +649,40 @@ function gamMain() {
   esac
 }
 
-if [ ! -f /etc/gam.conf ]; then
+CONFIG=/etc/gam.conf
+if [ -n "${USER_MODE}" ]; then
+  mkdir -p ~/.config/gam
+  CONFIG=~/.config/gam/gam.conf
+fi
+if [ ! -f ${CONFIG} ]; then
   if [ "${COMMAND}" != "create-config" ]; then
-    printf "${RED}[!]${NORMAL} Configuration does not exist, run ${BOLD}gam create-config${NORMAL}.\n"
+    C="gam create-config"
+    if [ -n "${USER_MODE}" ]; then
+      C="gam create-config --user"
+    fi
+    printf "${RED}[!]${NORMAL} Configuration does not exist, run ${BOLD}${C}${NORMAL}.\n"
     exit
   fi
 else
-  . /etc/gam.conf
+  . ${CONFIG}
   mkdir -p ${TMP_FOLDER}/cache/releases
   mkdir -p ${TMP_FOLDER}/cache/search
   mkdir -p ${TMP_FOLDER}/assets/extract
+  if [ ! -d "${INSTALL_FOLDER}" ]; then
+    mkdir -p "${INSTALL_FOLDER}"
+  fi
+  if [ -z "${BIN_FOLDER}" ]; then
+    # Handle old config files
+    BIN_FOLDER=/bin
+  fi
+  if [ ! -d "${BIN_FOLDER}" ]; then
+    mkdir -p "${BIN_FOLDER}"
+  fi
+fi
+
+SHORTCUT_FOLDER=/usr/share/applications
+if [ -n "${USER_MODE}" ]; then
+  SHORTCUT_FOLDER=~/.local/share/applications
 fi
 
 CURL=curl
