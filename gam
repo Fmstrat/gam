@@ -12,6 +12,8 @@
 ## apt install -y ncurses-bin debianutils jq curl tar xz-utils
 #
 
+RETURN=0
+
 {
 
 function usage() {
@@ -19,6 +21,7 @@ function usage() {
   gam list                     # List installed applications
   gam search <search string>   # Get a list of repos that match a search string
   gam install <author/repo>    # Install one or more applications
+  gam check [<author/repo>]    # Check currently installed applications for updates
   gam upgrade [<author/repo>]  # Upgrade one, more, or all currently installed applications
   gam remove <author/repo>     # Remove one or more applications
   gam create-config            # Create initial configuration
@@ -298,30 +301,45 @@ function installAsset() {
   FOLDER="${FOLDER,,}"
   if [ -f "${INSTALL_FOLDER}/${FOLDER}/VERSION" ]; then
     CURVERSION=$(cat "${INSTALL_FOLDER}/${FOLDER}/VERSION")
-    if [ "${CURVERSION}" = "${VERSION}" ]; then
-      FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
-      printf "${YELLOW}[:]${NORMAL} Version ${BOLD}${VERSION}${NORMAL} of ${BOLD}%s${NORMAL} already installed in ${BOLD}%s${NORMAL}.\n" "${FULL_NAME}" "${INSTALL_FOLDER}/${FOLDER}"
-      return
+    if [ -z "${CHECK_ONLY}" ]; then
+      if [ "${CURVERSION}" = "${VERSION}" ]; then
+        FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
+        printf "${YELLOW}[:]${NORMAL} Version ${BOLD}${VERSION}${NORMAL} of ${BOLD}%s${NORMAL} already installed in ${BOLD}%s${NORMAL}.\n" "${FULL_NAME}" "${INSTALL_FOLDER}/${FOLDER}"
+        return
+      fi
+    else
+      if [ "${CURVERSION}" = "${VERSION}" ]; then
+        FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
+        printf "${GREEN}[:]${NORMAL} ${BOLD}${FULL_NAME}${NORMAL}:${BOLD}${VERSION}${NORMAL} is the latest.\n"
+        return
+      else
+        FULL_NAME=${FOLDER##${INSTALL_FOLDER}/}
+        printf "${YELLOW}[:]${NORMAL} ${BOLD}${FULL_NAME}${NORMAL}:${BOLD}${VERSION}${NORMAL} is newer than the installed ${BOLD}${CURVERSION}${NORMAL}.\n"
+        RETURN=1
+        return
+      fi
     fi
   fi
-  ${CURL} -L "${URL}" -o "${TMP_FOLDER}/assets/${FILE}"
-  case "$(checkName ${FILE})" in
-    AppImage)
-      installAppImage "${NAME}" "${FILE}" "${FOLDER}"
-      ;;
-    tar.xz)
-      installArchive "tar.xz" "${NAME}" "${FILE}" "${FOLDER}"
-      ;;
-    tgz)
-      installArchive "tgz" "${NAME}" "${FILE}" "${FOLDER}"
-      ;;
-    deb)
-      installDeb "${NAME}" "${FILE}" "${FOLDER}"
-      ;;
-    rpm)
-      installRpm "${NAME}" "${FILE}" "${FOLDER}"
-      ;;
-  esac
+  if [ -z "${CHECK_ONLY}" ]; then
+    ${CURL} -L "${URL}" -o "${TMP_FOLDER}/assets/${FILE}"
+    case "$(checkName ${FILE})" in
+      AppImage)
+        installAppImage "${NAME}" "${FILE}" "${FOLDER}"
+        ;;
+      tar.xz)
+        installArchive "tar.xz" "${NAME}" "${FILE}" "${FOLDER}"
+        ;;
+      tgz)
+        installArchive "tgz" "${NAME}" "${FILE}" "${FOLDER}"
+        ;;
+      deb)
+        installDeb "${NAME}" "${FILE}" "${FOLDER}"
+        ;;
+      rpm)
+        installRpm "${NAME}" "${FILE}" "${FOLDER}"
+        ;;
+    esac
+  fi
 }
 
 function getDescription() {
@@ -377,10 +395,10 @@ function gamInstall() {
     MAXLENGTH=0
     CACHE=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
     INFO_CACHE=$(echo "${APPLICATION}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]').info
-    if [ ! -f "${TMP_FOLDER}/cache/releases/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${CACHE}" -mmin +1 | egrep '.*') ]; then
+    if [ ! -f "${TMP_FOLDER}/cache/releases/${CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${CACHE}" -mmin +10 | egrep '.*') ]; then
       ${CURL} -s "https://api.github.com/repos/${APPLICATION}/releases" -o "${TMP_FOLDER}/cache/releases/${CACHE}"
     fi
-    if [ ! -f "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" -mmin +1 | egrep '.*') ]; then
+    if [ ! -f "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" ] || [ $(find "${TMP_FOLDER}/cache/releases/${INFO_CACHE}" -mmin +10 | egrep '.*') ]; then
       ${CURL} -s "https://api.github.com/repos/${APPLICATION}" -o "${TMP_FOLDER}/cache/releases/${INFO_CACHE}"
     fi
     if [ -n "$(grep '"message": "Not Found"' "${TMP_FOLDER}/cache/releases/${INFO_CACHE}")" ]; then
@@ -610,6 +628,13 @@ function gamMain() {
       checkApplications
       gamInstall
       ;;
+    check)
+      CHECK_ONLY=true
+      gamUpgrade
+      if (( RETURN == 1 )); then
+        exit 1
+      fi
+      ;;
     upgrade)
       checkRoot
       gamUpgrade
@@ -721,6 +746,9 @@ else
   mkdir -p ${TMP_FOLDER}/cache/releases
   mkdir -p ${TMP_FOLDER}/cache/search
   mkdir -p ${TMP_FOLDER}/assets/extract
+  if [ -z "${USER_MODE}" ]; then
+    chmod a+rw ${TMP_FOLDER}/assets/extract
+  fi
   if [ ! -d "${INSTALL_FOLDER}" ]; then
     mkdir -p "${INSTALL_FOLDER}"
   fi
@@ -752,3 +780,5 @@ fi
 gamMain
 
 }
+
+exit ${RETURN}
