@@ -10,11 +10,11 @@ A linux tool similar to `apt` and `yum` that is used to search for and install a
 ![demo](demo/gam.gif)
 
 ## Contents
-- [Installation](#Installation)
-- [Configuration](#Configuration)
-- [Usage](#Usage)
-- [User mode](#User%20mode)
-- [Automatic update checking](#Automatic%20update%20checking)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [User mode](#user-mode)
+- [Automatic update checking](#automatic-update-checking)
 
 ## Installation
 First, install the prequisites.
