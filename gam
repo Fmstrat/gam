@@ -12,8 +12,6 @@
 ## apt install -y ncurses-bin debianutils jq curl tar xz-utils
 #
 
-set -e
-
 {
 
 function usage() {
@@ -95,21 +93,6 @@ done
 if [ -n "${GAM_DEBUG}" ]; then
   set -x
 fi
-
-BLACK="$(tput setaf 0)"
-RED="$(tput setaf 1)"
-GREEN="$(tput setaf 2)"
-YELLOW="$(tput setaf 3)"
-BLUE="$(tput setaf 4)"
-MAGENTA="$(tput setaf 5)"
-CYAN="$(tput setaf 6)"
-WHITE="$(tput setaf 7)"
-BOLD="$(tput bold)"
-NORMAL="$(tput sgr0)"
-DIM=$'\e[2m'
-
-COLS=$(tput cols)
-ROWS=$(tput lines)
 
 function checkName() {
   RET=false
@@ -648,6 +631,76 @@ function gamMain() {
       ;;
   esac
 }
+
+function notifyPrereqs() {
+  yum >/dev/null 2>&1
+  YUM=$?
+  apt-get >/dev/null 2>&1
+  APT=$?
+  if (( YUM != 127 )); then
+    printf "${RED}[!]${NORMAL} Missing prerequisites. Install with:\n"
+    printf "    ${BOLD}yum install -y ncurses which jq curl tar${NORMAL}\n"
+  elif (( APT != 127 )); then
+    printf "${RED}[!]${NORMAL} Missing prerequisites. Install with:\n"
+    printf "    ${BOLD}apt install -y ncurses-bin debianutils jq curl tar xz-utils${NORMAL}\n"
+  fi
+  exit
+}
+
+function checkPrereqs() {
+  MISSING=false
+  which >/dev/null 2>&1
+  WHICH=$?
+  if (( WHICH == 127 )); then
+    MISSING=true
+  else
+    if [ -z "$(which tput)" ]; then MISSING=true; fi
+    if [ -z "$(which jq)" ]; then MISSING=true; fi
+    if [ -z "$(which curl)" ]; then MISSING=true; fi
+    if [ -z "$(which tar)" ]; then MISSING=true; fi
+  fi
+  if [ ${MISSING} = true ]; then
+    notifyPrereqs
+  fi
+}
+
+tput >/dev/null 2>&1
+TPUT=$?
+if (( TPUT != 127 )); then
+  BLACK="$(tput setaf 0)"
+  RED="$(tput setaf 1)"
+  GREEN="$(tput setaf 2)"
+  YELLOW="$(tput setaf 3)"
+  BLUE="$(tput setaf 4)"
+  MAGENTA="$(tput setaf 5)"
+  CYAN="$(tput setaf 6)"
+  WHITE="$(tput setaf 7)"
+  BOLD="$(tput bold)"
+  NORMAL="$(tput sgr0)"
+  DIM=$'\e[2m'
+fi
+
+checkPrereqs
+
+if [ -n "${BLACK}" ]; then
+  BLACK="$(tput setaf 0)"
+  RED="$(tput setaf 1)"
+  GREEN="$(tput setaf 2)"
+  YELLOW="$(tput setaf 3)"
+  BLUE="$(tput setaf 4)"
+  MAGENTA="$(tput setaf 5)"
+  CYAN="$(tput setaf 6)"
+  WHITE="$(tput setaf 7)"
+  BOLD="$(tput bold)"
+  NORMAL="$(tput sgr0)"
+  DIM=$'\e[2m'
+fi
+
+
+COLS=$(tput cols)
+ROWS=$(tput lines)
+
+set -e
 
 CONFIG=/etc/gam.conf
 if [ -n "${USER_MODE}" ]; then
