@@ -60,6 +60,7 @@ Usage:
   gam list                     # List installed applications
   gam search <search string>   # Get a list of repos that match a search string
   gam install <author/repo>    # Install one or more applications
+  gam check [<author/repo>]    # Check currently installed applications for updates
   gam upgrade [<author/repo>]  # Upgrade one, more, or all currently installed applications
   gam remove <author/repo>     # Remove one or more applications
   gam create-config            # Create initial configuration
