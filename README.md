@@ -7,6 +7,8 @@ A linux tool similar to `apt` and `yum` that is used to search for and install a
 
 `gam` will automatically add a command to your `PATH` and if GNOME is installed it will add a shortcut to the application as well. These are automatically removed when uninstalling applications.
 
+***Proud to have made the top spot on [r/github](https://www.reddit.com/r/github) and [r/coolgithubprojects](https://www.reddit.com/r/coolgithubprojects) on launch day.***
+
 ![demo](demo/gam.gif)
 
 ## Contents
