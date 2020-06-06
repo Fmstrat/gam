@@ -1,0 +1,37 @@
+Name:           gam
+Version:        1.1
+Release:        0
+Summary:        GitHub Application Manager
+Packager:       Ben Curtis
+Group:          Application/Other
+License:        GPL
+URL:            https://github.com/fmstrat/gam
+Source0:        %{name}-%{version}.tar.gz
+BuildArch:      noarch
+
+%description
+Installs applications directly from GitHub releases.
+
+%prep
+%setup -q
+
+%build
+
+%install
+rm -rf $RPM_BUILD_ROOT
+mkdir -p $RPM_BUILD_ROOT/usr/bin
+cp scripts/* $RPM_BUILD_ROOT/usr/bin/
+
+%clean
+rm -rf $RPM_BUILD_ROOT
+
+%files
+%defattr(-,root,root,-)
+# %dir /usr/bin
+/usr/bin/gam
+
+%doc
+
+%changelog
+* Sat Jun 6 2020 Ben Curtis
+- release 1.1 - initial rpm release
