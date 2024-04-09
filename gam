@@ -192,9 +192,15 @@ function symLink() {
       printf "${RED}[!]${NORMAL} ${BOLD}/bin/%s${NORMAL} and ${BOLD}${BIN_FOLDER}/%s${NORMAL} already exist, cannot make symlink.\n" "${S_APP}" "${S_ALT_APP}"
     else
       printf "${YELLOW}[:]${NORMAL} ${BOLD}${BIN_FOLDER}/%s${NORMAL} already exists, using ${BOLD}${BIN_FOLDER}/%s${NORMAL} instead.\n" "${S_APP}" "${S_ALT_APP}"
+      if [ -L "${BIN_FOLDER}/${S_ALT_APP}" ]; then
+        rm -f "${BIN_FOLDER}/${S_ALT_APP}"
+      fi
       ln -s "${S_EXE}" "${BIN_FOLDER}/${S_ALT_APP}"
     fi
   else
+    if [ -L "${BIN_FOLDER}/${S_APP}" ]; then
+      rm -f "${BIN_FOLDER}/${S_APP}"
+    fi
     ln -s "${S_EXE}" "${BIN_FOLDER}/${S_APP}"
   fi
 }
