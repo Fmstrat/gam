@@ -13,7 +13,7 @@
 #
 
 RETURN=0
-RELEASE=v1.2
+RELEASE=v1.3
 
 {
 
@@ -42,6 +42,9 @@ Optional paramaters:
   -u:--user
   # Run in rootless user mode with a ~/.config/gam/gam.conf configuration, executables in,
   # ~/bin (by default), and no support for rpm or deb files.
+
+  -a|--allow-pre-release
+  # Allow inclusion of pre-releases
 
   -d|--debug
   # Debug mode to show what is happening behind the scenes.'
@@ -80,6 +83,10 @@ while [[ $# -gt 0 ]]; do
         ;;
       -d|--debug)
         export GAM_DEBUG=true
+        shift # past argument
+        ;;
+      -a|--allow-pre-release)
+        export ALLOW_PRERELEASE=true
         shift # past argument
         ;;
       *)
@@ -128,19 +135,20 @@ function checkMatch() {
   INCLUDE_COUNTER=0
   for INCLUDE in ${INCLUDES[@]}; do
     if [[ "${1}" = *"${INCLUDE}"* ]]; then
-      EXCLUDE_COUNTER=0
-      for EXCLUDE in ${EXCLUDES[@]}; do
-        if [[ "${1}" = *"${EXCLUDE}"* ]]; then
-          EXCLUDE_COUNTER=$((EXCLUDE_COUNTER+1))
-        fi
-      done
-      if [ ${EXCLUDE_COUNTER} -eq 0 ]; then
         INCLUDE_COUNTER=$((INCLUDE_COUNTER+1))
-      fi
     fi
   done
   if [ ${INCLUDE_COUNTER} -eq ${#INCLUDES[@]} ]; then
     RET=true
+  fi
+  EXCLUDE_COUNTER=0
+  for EXCLUDE in ${EXCLUDES[@]}; do
+    if [[ "${1}" = *"${EXCLUDE}"* ]]; then
+      EXCLUDE_COUNTER=$((EXCLUDE_COUNTER+1))
+    fi
+  done
+  if [ ${EXCLUDE_COUNTER} -gt 0 ]; then
+    RET=false
   fi
   echo ${RET}
 }
@@ -439,7 +447,11 @@ function gamInstall() {
     JSON=$(cat "${TMP_FOLDER}/cache/releases/${CACHE}")
     INFO_JSON=$(cat "${TMP_FOLDER}/cache/releases/${CACHE}.info")
     DESCRIPTION=$(getDescription "${INFO_JSON}")
-    for ASSET in $(echo ${JSON} | jq -r '.[] | select(.draft == false) | @base64'); do
+    SELECT=".draft == false and .prerelease == false"
+    if [ -n "${ALLOW_PRERELEASE}" ]; then
+      SELECT=".draft == false"
+    fi
+    for ASSET in $(echo ${JSON} | jq -r ".[] | select(${SELECT}) | @base64"); do
       ASSET=$(echo ${ASSET} | base64 -d)
       VERSION=$(echo ${ASSET} | jq -r '.tag_name')
       for ITEM in $(echo ${ASSET} | jq -r '.assets[] | @base64'); do
