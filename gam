@@ -13,7 +13,7 @@
 #
 
 RETURN=0
-RELEASE=v1.3
+RELEASE=v1.4
 
 {
 
