@@ -175,6 +175,9 @@ function gnomeMenu() {
     FOLDER="${2}"
     EXE="${3}"
     ICON="${4}"
+    if [ -z "${ICON}" ]; then
+      ICON="application-x-executable"
+    fi
     NAME=$(echo "${NAME}" | sed 's/[-_]/ /g;s/\b\(.\)/\u\1/g')
     SHORTCUT=$(echo "${FOLDER}" | tr -dc '[:alnum:]\n\r' | tr '[:upper:]' '[:lower:]')
     SHORTCUT="${SHORTCUT_FOLDER}/${SHORTCUT}.desktop"
@@ -227,12 +230,17 @@ function installAppImage() {
   if [ -z "${ICONSRC}" ]; then
     ICONSRC=$(find "${TMPFOLDER}/squashfs-root/" -type f \( -iname *.png -o -iname *.jpg -o -iname *.gif \) -print0 | xargs -0 ls -S |grep icon |head -n1)
   fi
-  ICON="${INSTALL_FOLDER}/${FOLDER}/${ICONSRC##*/}"
   rm -rf "${INSTALL_FOLDER}/${FOLDER}"
   mkdir -p "${INSTALL_FOLDER}/${FOLDER}/app"
-  mv "${ICONSRC}" "${ICON}"
+  ICON=""
+  if [ -n "${ICONSRC}" ]; then
+    ICON="${INSTALL_FOLDER}/${FOLDER}/${ICONSRC##*/}"
+    mv "${ICONSRC}" "${ICON}"
+  fi
   if [ -z "${USER_MODE}" ]; then
-    chown root:root "${ICON}"
+    if [ -n "${ICON}" ]; then
+      chown root:root "${ICON}"
+    fi
     chown root:root "${TMP_FOLDER}/assets/${FILE}"
   fi
   cd - > /dev/null
